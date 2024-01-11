@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2015 Apple Inc. All Rights Reserved.
+	Copyright (C) 2016 Apple Inc. All Rights Reserved.
 	See LICENSE.txt for this sample’s licensing information
 	
 	Abstract:
@@ -60,51 +60,51 @@ class ProxySettingsController: ConfigurationParametersViewController {
 			excludeSimpleCell,
 			exceptionsCell,
 			matchDomainsCell
-		].flatMap { $0 }
+		].compactMap { $0 }
 
 		pacSwitchCell.dependentCells = [ pacURLCell, pacScriptCell ]
 		pacSwitchCell.getIndexPath = {
 			return self.getIndexPathOfCell(self.pacSwitchCell)
-		}
+		} as (() -> IndexPath?)
 		pacSwitchCell.valueChanged = {
 			self.updateCellsWithDependentsOfCell(self.pacSwitchCell)
 			self.targetConfiguration.proxySettings?.autoProxyConfigurationEnabled = self.pacSwitchCell.isOn
-		}
+		} as (() -> Void)
 
 		pacURLCell.valueChanged = {
 			if let enteredText = self.pacURLCell.textField.text {
-				self.targetConfiguration.proxySettings?.proxyAutoConfigurationURL = NSURL(string: enteredText)
+				self.targetConfiguration.proxySettings?.proxyAutoConfigurationURL = URL(string: enteredText)
 			}
 			else {
 				self.targetConfiguration.proxySettings?.proxyAutoConfigurationURL = nil
 			}
-		}
+		} as (() -> Void)
 
 		HTTPSwitchCell.dependentCells = [ HTTPCell ]
 		HTTPSwitchCell.getIndexPath = {
 			return self.getIndexPathOfCell(self.HTTPSwitchCell)
-		}
+		} as (() -> IndexPath?)
 		HTTPSwitchCell.valueChanged = {
 			self.updateCellsWithDependentsOfCell(self.HTTPSwitchCell)
-			self.targetConfiguration.proxySettings?.HTTPEnabled = self.HTTPSwitchCell.isOn
-		}
+			self.targetConfiguration.proxySettings?.httpEnabled = self.HTTPSwitchCell.isOn
+		} as (() -> Void)
 
 		HTTPSSwitchCell.dependentCells = [ HTTPSCell ]
 		HTTPSSwitchCell.getIndexPath = {
 			return self.getIndexPathOfCell(self.HTTPSSwitchCell)
-		}
+		} as (() -> IndexPath?)
 		HTTPSSwitchCell.valueChanged = {
 			self.updateCellsWithDependentsOfCell(self.HTTPSSwitchCell)
-			self.targetConfiguration.proxySettings?.HTTPSEnabled = self.HTTPSSwitchCell.isOn
-		}
+			self.targetConfiguration.proxySettings?.httpsEnabled = self.HTTPSSwitchCell.isOn
+		} as (() -> Void)
 
 		excludeSimpleCell.valueChanged = {
-			self.targetConfiguration.proxySettings?.excludeSimpleHostnames = excludeSimpleCell.isOn
+			self.targetConfiguration.proxySettings?.excludeSimpleHostnames = self.excludeSimpleCell.isOn
 		}
 	}
 
 	/// Handle the event when the view is being displayed.
-	override func viewWillAppear(animated: Bool) {
+	override func viewWillAppear(_ animated: Bool) {
 		super.viewWillAppear(animated)
 
 		tableView.reloadData()
@@ -119,16 +119,16 @@ class ProxySettingsController: ConfigurationParametersViewController {
 			pacScriptCell.detailTextLabel?.text = "Optional"
 		}
 
-		HTTPSwitchCell.isOn = targetConfiguration.proxySettings?.HTTPEnabled ?? false
-		if let server = targetConfiguration.proxySettings?.HTTPServer {
+		HTTPSwitchCell.isOn = targetConfiguration.proxySettings?.httpEnabled ?? false
+		if let server = targetConfiguration.proxySettings?.httpServer {
 			HTTPCell.detailTextLabel?.text = "\(server.address):\(server.port)"
 		}
 		else {
 			HTTPCell.detailTextLabel?.text = nil
 		}
 
-		HTTPSSwitchCell.isOn = targetConfiguration.proxySettings?.HTTPSEnabled ?? false
-		if let server = targetConfiguration.proxySettings?.HTTPSServer {
+		HTTPSSwitchCell.isOn = targetConfiguration.proxySettings?.httpsEnabled ?? false
+		if let server = targetConfiguration.proxySettings?.httpsServer {
 			HTTPSCell.detailTextLabel?.text = "\(server.address):\(server.port)"
 		}
 		else {
@@ -143,47 +143,47 @@ class ProxySettingsController: ConfigurationParametersViewController {
 	}
 
 	/// Set up the destination view controller for a segue away from this view controller.
-	override func prepareForSegue(segue: UIStoryboardSegue, sender: AnyObject?) {
+	override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
 		guard let identifier = segue.identifier else { return }
 
 		switch identifier {
 			case "edit-match-domains":
 				// The user tapped on the "match domains" cell.
-				guard let stringListController = segue.destinationViewController as? StringListController else { break }
+				guard let stringListController = segue.destination as? StringListController else { break }
 				stringListController.setTargetStrings(targetConfiguration.proxySettings?.matchDomains, title: "Proxy Match Domains", addTitle: "Add a match domain...") { newStrings in
 					self.targetConfiguration.proxySettings?.matchDomains = newStrings
 				}
 
 			case "edit-exceptions":
 				// The user tapped on the "exceptions" cell.
-				guard let stringListController = segue.destinationViewController as? StringListController else { break }
+				guard let stringListController = segue.destination as? StringListController else { break }
 				stringListController.setTargetStrings(targetConfiguration.proxySettings?.exceptionList, title: "Proxy Exception Patterns", addTitle: "Add an exception pattern...") { newStrings in
 					self.targetConfiguration.proxySettings?.exceptionList = newStrings
 				}
 
 			case "edit-https-proxy-server":
 				// The user tapped on the "HTTPS server" cell.
-				guard let proxyServerController = segue.destinationViewController as? ProxyServerAddEditController else { break }
+				guard let proxyServerController = segue.destination as? ProxyServerAddEditController else { break }
 
-				proxyServerController.setTargetServer(targetConfiguration.proxySettings?.HTTPSServer, title: "HTTPS Proxy Server") { newServer in
-					targetConfiguration.proxySettings?.HTTPSServer = newServer
+				proxyServerController.setTargetServer(targetConfiguration.proxySettings?.httpsServer, title: "HTTPS Proxy Server") { newServer in
+					self.targetConfiguration.proxySettings?.httpsServer = newServer
 				}
 
 			case "edit-http-proxy-server":
 				// The user tapped on the "HTTP server" cell.
-				guard let proxyServerController = segue.destinationViewController as? ProxyServerAddEditController else { break }
+				guard let proxyServerController = segue.destination as? ProxyServerAddEditController else { break }
 
-				proxyServerController.setTargetServer(targetConfiguration.proxySettings?.HTTPServer, title: "HTTP Proxy Server") { newServer in
-					targetConfiguration.proxySettings?.HTTPServer = newServer
+				proxyServerController.setTargetServer(targetConfiguration.proxySettings?.httpServer, title: "HTTP Proxy Server") { newServer in
+					self.targetConfiguration.proxySettings?.httpServer = newServer
 				}
 
 			case "edit-pac-script":
 				// The user tapped on the "proxy auto-configuration script" cell.
-				guard let pacScriptController = segue.destinationViewController as? ProxyAutoConfigScriptController else { break }
+				guard let pacScriptController = segue.destination as? ProxyAutoConfigScriptController else { break }
 
 				pacScriptController.scriptText?.text = targetConfiguration.proxySettings?.proxyAutoConfigurationJavaScript
 				pacScriptController.saveScriptCallback = { newScript in
-					if let script = newScript where !script.isEmpty {
+					if let script = newScript , !script.isEmpty {
 						self.targetConfiguration.proxySettings?.proxyAutoConfigurationJavaScript = script
 					}
 					else {
@@ -199,6 +199,6 @@ class ProxySettingsController: ConfigurationParametersViewController {
 	// MARK: Interface
 
 	/// Handle an unwind segue back to this view controller.
-	@IBAction func handleUnwind(sender: UIStoryboardSegue) {
+	@IBAction func handleUnwind(_ sender: UIStoryboardSegue) {
 	}
 }

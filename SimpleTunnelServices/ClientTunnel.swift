@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2015 Apple Inc. All Rights Reserved.
+	Copyright (C) 2016 Apple Inc. All Rights Reserved.
 	See LICENSE.txt for this sample’s licensing information
 	
 	Abstract:
@@ -9,44 +9,79 @@
 import Foundation
 import NetworkExtension
 
+/// Make NEVPNStatus convertible to a string
+extension NWTCPConnectionState: CustomStringConvertible {
+	public var description: String {
+		switch self {
+			case .cancelled: return "Cancelled"
+			case .connected: return "Connected"
+			case .connecting: return "Connecting"
+			case .disconnected: return "Disconnected"
+			case .invalid: return "Invalid"
+			case .waiting: return "Waiting"
+        @unknown default:
+            fatalError()
+        }
+	}
+}
+public extension String {
+    func to(index:Int) ->String{
+        return String(self[..<self.index(self.startIndex, offsetBy:index)])
+        
+    }
+    func to(index:String.Index) ->String{
+        return String(self[..<index])
+        
+    }
+    func from(index:Int) ->String{
+        return String(self[self.index(self.startIndex, offsetBy:index)...])
+        
+    }
+    func from(index:String.Index) ->String{
+        return String(self[index...])
+        
+    }
+    
+}
 /// The client-side implementation of the SimpleTunnel protocol.
-public class ClientTunnel: Tunnel {
+open class ClientTunnel: Tunnel {
 
 	// MARK: Properties
 
 	/// The tunnel connection.
-	public var connection: NWTCPConnection?
+	open var connection: NWTCPConnection?
 
 	/// The last error that occurred on the tunnel.
-	public var lastError: NSError?
+	open var lastError: Error?
 
 	/// The previously-received incomplete message data.
 	var previousData: NSMutableData?
 
 	/// The address of the tunnel server.
-	public var remoteHost: String?
+	open var remoteHost: String?
 
 	// MARK: Interface
 
 	/// Start the TCP connection to the tunnel server.
-	public func startTunnel(provider: NETunnelProvider) -> SimpleTunnelError? {
+	open func startTunnel(_ provider: NETunnelProvider) -> SimpleTunnelError? {
 
 		guard let serverAddress = provider.protocolConfiguration.serverAddress else {
-			return .BadConfiguration
+			return .badConfiguration
 		}
 
 		let endpoint: NWEndpoint
 
-		if let colonRange = serverAddress.rangeOfCharacterFromSet(NSCharacterSet(charactersInString: ":"), options: [], range: nil) {
+		if let colonRange = serverAddress.rangeOfCharacter(from: CharacterSet(charactersIn: ":"), options: [], range: nil) {
 			// The server is specified in the configuration as <host>:<port>.
-			let hostname = serverAddress.substringWithRange(Range<String.Index>(start:serverAddress.startIndex, end:colonRange.startIndex))
-			let portString = serverAddress.substringWithRange(Range<String.Index>(start:colonRange.startIndex.successor(), end:serverAddress.endIndex))
+            let hostname = serverAddress[serverAddress.startIndex..<colonRange.lowerBound]
+            let portString = serverAddress[serverAddress.index(after: colonRange.lowerBound)..<serverAddress.endIndex]
+           
 
 			guard !hostname.isEmpty && !portString.isEmpty else {
-				return .BadConfiguration
+				return .badConfiguration
 			}
-
-			endpoint = NWHostEndpoint(hostname:hostname, port:portString)
+            simpleTunnelLog("Got on the tunnel server address: \(hostname):\(portString)")
+            endpoint = NWHostEndpoint(hostname:String(hostname), port:String(portString))
 		}
 		else {
 			// The server is specified in the configuration as a Bonjour service name.
@@ -54,112 +89,121 @@ public class ClientTunnel: Tunnel {
 		}
 
 		// Kick off the connection to the server.
-		connection = provider.createTCPConnectionToEndpoint(endpoint, enableTLS:false, TLSParameters:nil, delegate:nil)
+		connection = provider.createTCPConnection(to: endpoint, enableTLS:false, tlsParameters:nil, delegate:nil)
 
 		// Register for notificationes when the connection status changes.
-		connection!.addObserver(self, forKeyPath: "state", options: .Initial, context: &connection)
-
+        
+		connection!.addObserver(self, forKeyPath: "state", options: .initial, context: &ClientTunnel.observerContext)
+        //connection!.addObserver(self, forKeyPath: "state", options: .initial, context: &connection)
 		return nil
 	}
 
 	/// Close the tunnel.
-	public func closeTunnelWithError(error: NSError?) {
+	open func closeTunnelWithError(_ error: Error?) {
 		lastError = error
 		closeTunnel()
 	}
 
-	/// Handle data read from the tunnel connection.
-	func handleReadEvent(data: NSData?, error: NSError?) {
-		if let readError = error {
-			print("Got an error on the tunnel connection: \(readError)")
-			closeTunnelWithError(readError)
-			return
-		}
-		guard let newData = data else {
-			// EOF
-			closeTunnel()
+    private static var observerContext = 0
+	/// Read a SimpleTunnel packet from the tunnel connection.
+	func readNextPacket() {
+		guard let targetConnection = connection else {
+			closeTunnelWithError(SimpleTunnelError.badConnection )
 			return
 		}
 
-		// If there is a previously-read incomplete message, append the new data to what was previously read.
-		var currentData = newData
-		if let oldData = previousData {
-			oldData.appendData(newData)
-			currentData = oldData
-			previousData = nil
-		}
+		// First, read the total length of the packet.
+		targetConnection.readMinimumLength(MemoryLayout<UInt32>.size, maximumLength: MemoryLayout<UInt32>.size) { data, error in
+			if let readError = error {
+				simpleTunnelLog("Got an error on the tunnel connection: \(readError)")
+				self.closeTunnelWithError(readError)
+				return
+			}
 
-		// Start out by looking at all of the data.
-		var currentRange = Range(start: 0, end: currentData.length)
+            guard let data = data else  {return }
+			let lengthData = data
 
-		while currentRange.count > sizeof(UInt32.self) {
+			guard lengthData.count == MemoryLayout<UInt32>.size else {
+				simpleTunnelLog("Length data length (\(lengthData.count)) != sizeof(UInt32) (\(MemoryLayout<UInt32>.size)")
+				self.closeTunnelWithError(SimpleTunnelError.internalError as NSError)
+				return
+			}
+
 			var totalLength: UInt32 = 0
+			(lengthData as NSData).getBytes(&totalLength, length: MemoryLayout<UInt32>.size)
 
-			// Parse out the total length of the message, which is stored in the first 4 bytes of the message.
-			let lengthRange = Range(start: currentRange.startIndex, end: currentRange.startIndex + sizeofValue(totalLength))
-			currentData.getBytes(&totalLength, range: NSRange(lengthRange))
+			if totalLength > UInt32(Tunnel.maximumMessageSize) {
+				simpleTunnelLog("Got a length that is too big: \(totalLength)")
+				self.closeTunnelWithError(SimpleTunnelError.internalError as NSError)
+				return
+			}
 
-			// If we don't have the entire message, stop parsing.
-			guard currentRange.count >= Int(totalLength) else { break }
+			totalLength -= UInt32(MemoryLayout<UInt32>.size)
 
-			// Move past the first 4 bytes holding the total length.
-			currentRange = rangeByMovingStartOfRange(currentRange, byCount: sizeofValue(totalLength))
+			// Second, read the packet payload.
+			targetConnection.readMinimumLength(Int(totalLength), maximumLength: Int(totalLength)) { data, error in
+				if let payloadReadError = error {
+					simpleTunnelLog("Got an error on the tunnel connection: \(payloadReadError)")
+					self.closeTunnelWithError(payloadReadError as NSError?)
+					return
+				}
 
-			// Subtract the size of the total length from the total length of the message to get the message payload length.
-			let payloadLength = Int(totalLength - UInt32(sizeofValue(totalLength)))
+                guard let data = data else {return}
+				let payloadData = data
 
-			// Get the payload and handle the message.
-			let range = Range(start: currentRange.startIndex, end: currentRange.startIndex + payloadLength)
-			handlePacket(currentData.subdataWithRange(NSRange(range)))
+				guard payloadData.count == Int(totalLength) else {
+					simpleTunnelLog("Payload data length (\(payloadData.count)) != payload length (\(totalLength)")
+					self.closeTunnelWithError(SimpleTunnelError.internalError)
+					return
+				}
 
-			// Move past the payload.
-			currentRange = rangeByMovingStartOfRange(currentRange, byCount: payloadLength)
-		}
+				_ = self.handlePacket(payloadData)
 
-		// If we have data left, then save the incomplete message for when we get more data from the tunnel connection.
-		if !currentRange.isEmpty {
-			previousData = NSMutableData(data: currentData.subdataWithRange(NSRange(currentRange)))
-		}
-
-		guard let targetConnection = connection else { return }
-
-		// Kick off another read operation.
-		targetConnection.readMinimumLength(sizeof(UInt32.self), maximumLength: Tunnel.packetSize) { data, error in
-			self.handleReadEvent(data, error: error)
+				self.readNextPacket()
+			}
 		}
 	}
 
 	/// Send a message to the tunnel server.
-	public func sendMessage(messageProperties: [String: AnyObject], completionHandler: (NSError?) -> Void) {
+	open func sendMessage(_ messageProperties: [String: Any], completionHandler: @escaping (Error?) -> Void) {
 		guard let messageData = serializeMessage(messageProperties) else {
-			completionHandler(SimpleTunnelError.InternalError as NSError)
+			completionHandler(SimpleTunnelError.internalError )
 			return
 		}
 
-		connection?.write(messageData, completionHandler: completionHandler)
+        connection?.write(messageData, completionHandler: completionHandler )
 	}
 
 	// MARK: NSObject
 
 	/// Handle changes to the tunnel connection state.
-	public override func observeValueForKeyPath(keyPath: String?, ofObject object: AnyObject?, change: [String: AnyObject]?, context: UnsafeMutablePointer<Void>) {
-		guard keyPath == "state" && UnsafeMutablePointer<NWTCPConnection?>(context).memory == connection else {
-			super.observeValueForKeyPath(keyPath, ofObject: object, change: change, context: context)
+	open override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?) {
+		//http://michael-brown.net/2017/swift-and-kvo-context-variables/
+        //stop reason = Simultaneous accesses to 0x1037010e8, but modification requires exclusive access
+        //context?.assumingMemoryBound(to: Optional<NWTCPConnection>.self).pointee == connection
+        guard keyPath == "state" &&  &ClientTunnel.observerContext == context else {
+			super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
 			return
 		}
 
+		simpleTunnelLog("Tunnel connection state changed to \(connection!.state)")
+
 		switch connection!.state {
-			case .Connected:
-				// Let the delegate know that the tunnel is open, and start reading from the tunnel connection.
-				delegate?.tunnelDidOpen(self)
-				connection!.readMinimumLength(sizeof(UInt32.self), maximumLength: Tunnel.packetSize) { data, error in
-					self.handleReadEvent(data, error: error)
+			case .connected:
+				if let remoteAddress = self.connection!.remoteAddress as? NWHostEndpoint {
+					remoteHost = remoteAddress.hostname
 				}
 
-			case .Disconnected:
-				closeTunnelWithError(connection!.error)
+				// Start reading messages from the tunnel connection.
+				readNextPacket()
 
-			case .Cancelled:
+				// Let the delegate know that the tunnel is open
+				delegate?.tunnelDidOpen(self)
+
+			case .disconnected:
+				closeTunnelWithError(connection!.error as NSError?)
+
+			case .cancelled:
 				connection!.removeObserver(self, forKeyPath:"state", context:&connection)
 				connection = nil
 				delegate?.tunnelDidClose(self)
@@ -172,47 +216,61 @@ public class ClientTunnel: Tunnel {
 	// MARK: Tunnel
 
 	/// Close the tunnel.
-	override public func closeTunnel() {
+	override open func closeTunnel() {
+		super.closeTunnel()
 		// Close the tunnel connection.
 		if let TCPConnection = connection {
 			TCPConnection.cancel()
 		}
-		super.closeTunnel()
+
 	}
 
 	/// Write data to the tunnel connection.
-	override func writeDataToTunnel(data: NSData, startingAtOffset: Int) -> Int {
+	override func writeDataToTunnel(_ data: Data, startingAtOffset: Int) -> Int {
 		connection?.write(data) { error in
-			self.closeTunnelWithError(error)
+			if error != nil {
+				self.closeTunnelWithError(error as NSError?)
+			}
 		}
-		return data.length
+		return data.count
 	}
 
 	/// Handle a message received from the tunnel server.
-	override func handleMessage(commandType: TunnelCommand, properties: [String: AnyObject], connection: Connection?) -> Bool {
+	override func handleMessage(_ commandType: TunnelCommand, properties: [String: AnyObject], connection: Connection?) -> Bool {
 		var success = true
 
 		switch commandType {
-			case .OpenResult:
+			case .openResult:
 				// A logical connection was opened successfully.
 				guard let targetConnection = connection,
-					resultCodeNumber = properties[TunnelMessageKey.ResultCode.rawValue] as? Int,
-					resultCode = TunnelConnectionOpenResult(rawValue: resultCodeNumber)
+					let resultCodeNumber = properties[TunnelMessageKey.ResultCode.rawValue] as? Int,
+					let resultCode = TunnelConnectionOpenResult(rawValue: resultCodeNumber)
 					else
 				{
 					success = false
 					break
 				}
 
-				if let remoteAddress = self.connection!.remoteAddress as? NWHostEndpoint {
-					remoteHost = remoteAddress.hostname
-				}
-				targetConnection.handleOpenCompleted(resultCode, properties:properties)
+				targetConnection.handleOpenCompleted(resultCode, properties:properties as [NSObject : AnyObject])
+
+			case .fetchConfiguration:
+				guard let configuration = properties[TunnelMessageKey.Configuration.rawValue] as? [String: AnyObject]
+					else { break }
+
+				delegate?.tunnelDidSendConfiguration(self, configuration: configuration)
 			
 			default:
-				print("Tunnel received an invalid command")
+				simpleTunnelLog("Tunnel received an invalid command")
 				success = false
 		}
 		return success
+	}
+
+	/// Send a FetchConfiguration message on the tunnel connection.
+	open func sendFetchConfiguation() {
+		let properties = createMessagePropertiesForConnection(0, commandType: .fetchConfiguration)
+		if !sendMessage(properties) {
+			simpleTunnelLog("Failed to send a fetch configuration message")
+		}
 	}
 }

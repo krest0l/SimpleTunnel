@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2015 Apple Inc. All Rights Reserved.
+	Copyright (C) 2016 Apple Inc. All Rights Reserved.
 	See LICENSE.txt for this sample’s licensing information
 	
 	Abstract:
@@ -15,7 +15,7 @@ class ServerConfiguration {
 	// MARK: Properties
 
 	/// A dictionary containing configuration parameters.
-	var configuration: [String: AnyObject]
+	var configuration: [String: Any]
 
 	/// A pool of IP addresses to allocate to clients.
 	var addressPool: AddressPool?
@@ -23,7 +23,7 @@ class ServerConfiguration {
 	// MARK: Initializers
 
 	init() {
-		configuration = [String: AnyObject]()
+		configuration = [String: Any]()
 		addressPool = nil
 	}
 
@@ -32,40 +32,42 @@ class ServerConfiguration {
 	/// Read the configuration settings from a plist on disk.
 	func loadFromFileAtPath(path: String) -> Bool {
 
-		guard let fileStream = NSInputStream(fileAtPath: path) else {
-			print("Failed to open \(path) for reading")
+        guard let fileStream = InputStream(fileAtPath: path) else {
+			simpleTunnelLog("Failed to open \(path) for reading")
 			return false
 		}
 
 		fileStream.open()
 
-		var newConfiguration: [String: AnyObject]
+		var newConfiguration: [String: Any]
 		do {
-			 newConfiguration = try NSPropertyListSerialization.propertyListWithStream(fileStream, options: .MutableContainers, format: nil) as! [String: AnyObject]
+            newConfiguration = try PropertyListSerialization.propertyList(with: fileStream, options: .mutableContainers, format: nil) as! [String: Any]
 		}
 		catch {
-			print("Failed to read the configuration from \(path): \(error)")
+			simpleTunnelLog("Failed to read the configuration from \(path): \(error)")
 			return false
 		}
 
-		guard let startAddress = getValueFromPlist(newConfiguration, keyArray: [.IPv4, .Pool, .StartAddress]) as? String else {
-			print("Missing v4 start address")
+        guard let startAddress = getValueFromPlist(newConfiguration as [NSObject : AnyObject], keyArray: [.IPv4, .Pool, .StartAddress]) as? String else {
+			simpleTunnelLog("Missing v4 start address")
 			return false
 		}
-		guard let endAddress = getValueFromPlist(newConfiguration, keyArray: [.IPv4, .Pool, .EndAddress]) as? String else {
-			print("Missing v4 end address")
+        guard let endAddress = getValueFromPlist(newConfiguration as [NSObject : AnyObject], keyArray: [.IPv4, .Pool, .EndAddress]) as? String else {
+			simpleTunnelLog("Missing v4 end address")
 			return false
 		}
 
 		addressPool = AddressPool(startAddress: startAddress, endAddress: endAddress)
 
 		// The configuration dictionary gets sent to clients as the tunnel settings dictionary. Remove the IP pool parameters.
-		if var IPv4Dictionary = newConfiguration[SettingsKey.IPv4.rawValue] as? [NSObject: AnyObject] {
-			IPv4Dictionary.removeValueForKey(SettingsKey.Pool.rawValue)
-			newConfiguration[SettingsKey.IPv4.rawValue] = IPv4Dictionary
+		if let value = newConfiguration[SettingsKey.IPv4.rawValue] as? [NSObject: Any] {
+            var IPv4Dictionary = value
+            
+            IPv4Dictionary.removeValue(forKey: SettingsKey.Pool.rawValue as NSObject)
+            newConfiguration[SettingsKey.IPv4.rawValue] = IPv4Dictionary
 		}
 
-		if !newConfiguration.keys.contains({ $0 == SettingsKey.DNS.rawValue }) {
+        if !newConfiguration.keys.contains(where: { $0 == SettingsKey.DNS.rawValue }) {
 			// The configuration does not specify any DNS configuration, so get the current system default resolver.
 			let (DNSServers, DNSSearchDomains) = ServerConfiguration.copyDNSConfigurationFromSystem()
 
@@ -75,7 +77,7 @@ class ServerConfiguration {
 			]
 		}
 
-		configuration = newConfiguration
+        configuration = newConfiguration
 
 		return true
 	}
@@ -88,14 +90,19 @@ class ServerConfiguration {
 
 		// The default resolver configuration can be obtained from State:/Network/Global/DNS in the dynamic store.
 
-		if let globalDNS = SCDynamicStoreCopyValue(nil, globalDNSKey) as? [NSObject: AnyObject],
-			servers = globalDNS[kSCPropNetDNSServerAddresses as String] as? [String]
-		{
-			if let searchDomains = globalDNS[kSCPropNetDNSSearchDomains as String] as? [String] {
-				DNSSearchDomains = searchDomains
-			}
-			DNSServers = servers
-		}
+      
+        if let x = SCDynamicStoreCopyValue(nil, globalDNSKey) as? [NSObject:AnyObject] {
+            
+            
+            if  let searchDomains = x[kSCPropNetDNSSearchDomains] {
+                //as! [String]
+                DNSSearchDomains = searchDomains as! [String]
+            }
+            
+            DNSServers = x[kSCPropNetDNSServerAddresses] as! [String]
+        }
+
+        simpleTunnelLog("dns:\(DNSServers) \(DNSSearchDomains)")
 
 		return (DNSServers, DNSSearchDomains)
 	}

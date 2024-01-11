@@ -2,10 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>UIVPNPlugin</key>
-	<array>
-		<string>${PLUGIN_BUNDLE_ID}</string>
-	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
@@ -24,18 +20,11 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
-	<key>NETestAppMapping_disabled</key>
+	<key>NETestAppMapping</key>
 	<dict>
-		<key>com.apple.vpntest.jpw.plugin-test.applayer</key>
+		<key>3EC4174F-E479-11E7-85A7-A45E60E37709</key>
 		<array>
-			<string>com.apple.vpntest.BasicBrowser</string>
-		</array>
-		<key>com.apple.vpntest.jpw-test-per-app-vpn-secondary</key>
-		<array>
-			<string>com.google.chrome.ios</string>
-			<string>com.linkedin.app</string>
+			<string>com.yarshure.Demo</string>
 		</array>
 	</dict>
 	<key>UILaunchStoryboardName</key>
@@ -59,6 +48,10 @@
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UIVPNPlugin</key>
+	<array>
+		<string>${PLUGIN_BUNDLE_ID}</string>
 	</array>
 </dict>
 </plist>

@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2015 Apple Inc. All Rights Reserved.
+	Copyright (C) 2016 Apple Inc. All Rights Reserved.
 	See LICENSE.txt for this sample’s licensing information
 	
 	Abstract:
@@ -17,19 +17,19 @@ class TextFieldCell : UITableViewCell, UITextFieldDelegate {
 	@IBOutlet weak var textField: UITextField!
 
 	/// The block to call when the value of the text field changes.
-	var valueChanged: (Void -> Void)?
+	var valueChanged: (() -> Void)?
 
 	// MARK: UITextFieldDelegate
 
 	/// Handle the event of the user finishing changing the value of the text field.
-	func textFieldDidEndEditing(textField: UITextField) {
+	func textFieldDidEndEditing(_ textField: UITextField) {
 		textField.resignFirstResponder()
 
 		valueChanged?()
 	}
 
 	/// Dismiss the keyboard
-	func textFieldShouldReturn(textField: UITextField) -> Bool {
+	func textFieldShouldReturn(_ textField: UITextField) -> Bool {
 		textField.resignFirstResponder()
 		return true
 	}

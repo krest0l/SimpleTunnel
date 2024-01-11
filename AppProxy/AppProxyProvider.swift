@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2015 Apple Inc. All Rights Reserved.
+	Copyright (C) 2016 Apple Inc. All Rights Reserved.
 	See LICENSE.txt for this sample’s licensing information
 	
 	Abstract:
@@ -18,21 +18,26 @@ class AppProxyProvider: NEAppProxyProvider, TunnelDelegate {
 	var tunnel: ClientTunnel?
 
 	/// The completion handler to call when the tunnel is fully established.
-	var pendingStartCompletion: (NSError? -> Void)?
+	var pendingStartCompletion: ((Error?) -> Void)?
 
 	/// The completion handler to call when the tunnel is fully disconnected.
-	var pendingStopCompletion: (Void -> Void)?
+    var pendingStopCompletion: (() -> Void)?
 
 	// MARK: NEAppProxyProvider
 
+    override init() {
+        super.init()
+        NSLog("app proxy init...")
+    }
 	/// Begin the process of establishing the tunnel.
-	override func startProxyWithOptions(options: [String : AnyObject]?, completionHandler: (NSError?) -> Void) {
+	override func startProxy(options: [String : Any]?, completionHandler: @escaping (Error?) -> Void) {
 
+        NSLog("app proxy starting...")
 		let newTunnel = ClientTunnel()
 		newTunnel.delegate = self
 
 		if let error = newTunnel.startTunnel(self) {
-			completionHandler(error as NSError)
+			completionHandler(error)
 			return
 		}
 
@@ -40,8 +45,11 @@ class AppProxyProvider: NEAppProxyProvider, TunnelDelegate {
 		tunnel = newTunnel
 	}
 
+    override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)? = nil) {
+        completionHandler!(messageData)
+    }
 	/// Begin the process of stopping the tunnel.
-	override func stopProxyWithReason(reason: NEProviderStopReason, completionHandler: () -> Void) {
+	override func stopProxy(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
 
 		// Clear out any pending start completion handler.
 		pendingStartCompletion = nil
@@ -51,7 +59,7 @@ class AppProxyProvider: NEAppProxyProvider, TunnelDelegate {
 	}
 
 	/// Handle a new flow of network data created by an application.
-	override func handleNewFlow(flow: (NEAppProxyFlow?)) -> Bool {
+	override func handleNewFlow(_ flow: (NEAppProxyFlow?)) -> Bool {
 		var newConnection: ClientAppProxyConnection?
 
 		guard let clientTunnel = tunnel else { return false }
@@ -73,15 +81,18 @@ class AppProxyProvider: NEAppProxyProvider, TunnelDelegate {
 	// MARK: TunnelDelegate
 
 	/// Handle the event of the tunnel being fully established.
-	func tunnelDidOpen(targetTunnel: Tunnel) {
-
-		// Call the pending start completion handler
-		pendingStartCompletion?(nil)
-		pendingStartCompletion = nil
+	func tunnelDidOpen(_ targetTunnel: Tunnel) {
+		guard let clientTunnel = targetTunnel as? ClientTunnel else {
+			pendingStartCompletion?(SimpleTunnelError.internalError as NSError)
+			pendingStartCompletion = nil
+			return
+		}
+		simpleTunnelLog("Tunnel opened, fetching configuration")
+		clientTunnel.sendFetchConfiguation()
 	}
 
 	/// Handle the event of the tunnel being fully disconnected.
-	func tunnelDidClose(targetTunnel: Tunnel) {
+	func tunnelDidClose(_ targetTunnel: Tunnel) {
 
 		// Call the appropriate completion handler depending on the current pending tunnel operation.
 		if pendingStartCompletion != nil {
@@ -97,5 +108,44 @@ class AppProxyProvider: NEAppProxyProvider, TunnelDelegate {
 			cancelProxyWithError(tunnel?.lastError)
 		}
 		tunnel = nil
+	}
+
+	/// Handle the server sending a configuration.
+	func tunnelDidSendConfiguration(_ targetTunnel: Tunnel, configuration: [String : AnyObject]) {
+		simpleTunnelLog("Server sent configuration: \(configuration)")
+
+		guard let tunnelAddress = tunnel?.remoteHost else {
+			let error = SimpleTunnelError.badConnection
+			pendingStartCompletion?(error as NSError)
+			pendingStartCompletion = nil
+			return
+		}
+
+		guard let DNSDictionary = configuration[SettingsKey.DNS.rawValue] as? [String: AnyObject], let DNSServers = DNSDictionary[SettingsKey.Servers.rawValue] as? [String] else {
+			self.pendingStartCompletion?(nil)
+			self.pendingStartCompletion = nil
+			return
+		}
+
+		let newSettings = NETunnelNetworkSettings(tunnelRemoteAddress: tunnelAddress)
+
+		newSettings.dnsSettings = NEDNSSettings(servers: DNSServers)
+		if let DNSSearchDomains = DNSDictionary[SettingsKey.SearchDomains.rawValue] as? [String] {
+			newSettings.dnsSettings?.searchDomains = DNSSearchDomains
+		}
+
+		simpleTunnelLog("Calling setTunnelNetworkSettings")
+
+		self.setTunnelNetworkSettings(newSettings) { error in
+			if error != nil {
+				let startError = SimpleTunnelError.badConfiguration
+				self.pendingStartCompletion?(startError as NSError)
+				self.pendingStartCompletion = nil
+			}
+			else {
+				self.pendingStartCompletion?(nil)
+				self.pendingStartCompletion = nil
+			}
+		}
 	}
 }
