@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2015 Apple Inc. All Rights Reserved.
+	Copyright (C) 2016 Apple Inc. All Rights Reserved.
 	See LICENSE.txt for this sample’s licensing information
 	
 	Abstract:
@@ -23,14 +23,14 @@ class AddressPool {
 	var inUseMask: [Bool]
 
 	/// A dispatch queue for serializing access to the pool.
-	let queue: dispatch_queue_t
+	let queue: DispatchQueue
 
 	// MARK: Initializers
 	
 	init(startAddress: String, endAddress: String) {
 		baseAddress = SocketAddress()
-		inUseMask = [Bool](count: 0, repeatedValue: false)
-		queue = dispatch_queue_create("AddressPoolQueue", nil)
+        inUseMask = [Bool](repeating: false, count: 0)
+        queue = DispatchQueue(label: "AddressPoolQueue")
 
 		let start = SocketAddress()
 		let end = SocketAddress()
@@ -43,34 +43,34 @@ class AddressPool {
 			else { return }
 
 		guard start.sin.sin_family == sa_family_t(AF_INET) else {
-			print("IPv6 is not currently supported")
+			simpleTunnelLog("IPv6 is not currently supported")
 			return
 		}
 		guard (start.sin.sin_addr.s_addr & 0xffff) == (end.sin.sin_addr.s_addr & 0xffff) else {
-			print("start address (\(startAddress)) is not in the same class B network as end address (\(endAddress)) ")
+			simpleTunnelLog("start address (\(startAddress)) is not in the same class B network as end address (\(endAddress)) ")
 			return
 		}
 
 		let difference = end.difference(start)
 		guard difference >= 0 else {
-			print("start address (\(startAddress)) is greater than end address (\(endAddress))")
+			simpleTunnelLog("start address (\(startAddress)) is greater than end address (\(endAddress))")
 			return
 		}
 
 		baseAddress.sin = start.sin
 		size = UInt64(difference)
-		inUseMask = [Bool](count: Int(size), repeatedValue: false)
+        inUseMask = [Bool](repeating: false, count: Int(size))
 	}
 
 	/// Allocate an address from the pool.
 	func allocateAddress() -> String? {
 		var result: String?
 
-		dispatch_sync(queue) {
+        queue.sync() {
 			let address = SocketAddress(otherAddress: self.baseAddress)
 
 			// Look for an address that is not currently allocated
-			for (index, inUse) in self.inUseMask.enumerate() {
+            for (index, inUse) in self.inUseMask.enumerated() {
 				if !inUse {
 					address.increment(UInt32(index))
 					self.inUseMask[index] = true
@@ -80,13 +80,13 @@ class AddressPool {
 			}
 		}
 
-		print("Allocated address \(result)")
+        simpleTunnelLog("Allocated address \(String(describing: result))")
 		return result
 	}
 
 	/// Deallocate an address in the pool.
 	func deallocateAddress(addrString: String) {
-		dispatch_sync(queue) {
+        queue.sync() {
 			let address = SocketAddress()
 
 			guard address.setFromString(addrString) else { return }

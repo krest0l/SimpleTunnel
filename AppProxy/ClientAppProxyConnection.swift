@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2015 Apple Inc. All Rights Reserved.
+	Copyright (C) 2016 Apple Inc. All Rights Reserved.
 	See LICENSE.txt for this sample’s licensing information
 	
 	Abstract:
@@ -19,7 +19,7 @@ class ClientAppProxyConnection : Connection {
 	let appProxyFlow: NEAppProxyFlow
 
 	/// A dispatch queue used to regulate the sending of the connection's data through the tunnel connection.
-	lazy var queue: dispatch_queue_t = dispatch_queue_create("ClientConnection Handle Data queue", nil)
+	lazy var queue: DispatchQueue = DispatchQueue(label: "ClientConnection Handle Data queue", attributes: [])
 
 	// MARK: Initializers
 
@@ -36,16 +36,16 @@ class ClientAppProxyConnection : Connection {
 	}
 
 	/// Send an "Open" message to the SimpleTunnel server, to begin the process of establishing a flow of data in the SimpleTunnel protocol.
-	func open(extraProperties: [String: AnyObject]) {
+	func open(_ extraProperties: [String: Any]) {
 		guard let clientTunnel = tunnel as? ClientTunnel else {
 			// Close the NEAppProxyFlow.
-			let error: SimpleTunnelError = .BadConnection
+			let error: SimpleTunnelError = .badConnection
 			appProxyFlow.closeReadWithError(error as NSError)
 			appProxyFlow.closeWriteWithError(error as NSError)
 			return
 		}
 
-		let properties = createMessagePropertiesForConnection(identifier, commandType:.Open, extraProperties:extraProperties)
+		let properties = createMessagePropertiesForConnection(identifier, commandType:.open, extraProperties:extraProperties)
 
 		clientTunnel.sendMessage(properties) { error in
 			if let error = error {
@@ -57,55 +57,37 @@ class ClientAppProxyConnection : Connection {
 	}
 
 	/// Handle the result of sending a data message to the SimpleTunnel server.
-	func handleSendResult(error: NSError?) {
+	func handleSendResult(_ error: Error?) {
 	}
 
 	/// Handle errors that occur on the connection.
-	func handleErrorCondition(flowError: NEAppProxyFlowError? = nil, notifyServer: Bool = true) {
-		if notifyServer {
-			if let clientTunnel = tunnel as? ClientTunnel {
-				// Send a "close" message to the SimpleTunnel server.
-				let properties = createMessagePropertiesForConnection(identifier, commandType: .Close, extraProperties:[
-						TunnelMessageKey.CloseDirection.rawValue: TunnelConnectionCloseDirection.All.rawValue,
-					])
+	func handleErrorCondition(_ flowError: NEAppProxyFlowError.Code? = nil, notifyServer: Bool = true) {
 
-				clientTunnel.sendMessage(properties) { inError in
-					self.closeConnection(.All)
-				}
-			}
-			else {
-				closeConnection(.All)
-			}
-		}
+		guard !isClosedCompletely else { return }
 
-		var error: NSError?
-		if let ferror = flowError {
-			error = NSError(domain: NEAppProxyErrorDomain, code: ferror.rawValue, userInfo: nil)
-		}
+		tunnel?.sendCloseType(.all, forConnection: identifier)
 
-		// Close the NEAppProxyFlow.
-		appProxyFlow.closeReadWithError(error)
-		appProxyFlow.closeWriteWithError(error)
+		closeConnection(.all)
 	}
 
 	/// Send a "Data" message to the SimpleTunnel server.
-	func sendDataMessage(data: NSData, extraProperties: [String: AnyObject] = [:]) {
-		dispatch_async(queue) {
-
-			// Suspend further writes to the tunnel until this write operation is completed.
-			dispatch_suspend(self.queue)
+	func sendDataMessage(_ data: Data, extraProperties: [String: Any] = [:]) {
+		queue.async {
 
 			guard let clientTunnel = self.tunnel as? ClientTunnel else { return }
+
+			// Suspend further writes to the tunnel until this write operation is completed.
+			self.queue.suspend()
 
 			var dataProperties = extraProperties
 			dataProperties[TunnelMessageKey.Data.rawValue] = data
 
-			let properties = createMessagePropertiesForConnection(self.identifier, commandType: .Data, extraProperties:dataProperties)
+			let properties = createMessagePropertiesForConnection(self.identifier, commandType: .data, extraProperties:dataProperties)
 
 			clientTunnel.sendMessage(properties) { error in
 
 				// Resume the queue to allow subsequent writes.
-				dispatch_resume(self.queue)
+				self.queue.resume()
 
 				// This will schedule another read operation on the NEAppProxyFlow.
 				self.handleSendResult(error)
@@ -116,33 +98,42 @@ class ClientAppProxyConnection : Connection {
 	// MARK: Connection
 
 	/// Handle the "Open Completed" message received from the SimpleTunnel server for this connection.
-	override func handleOpenCompleted(resultCode: TunnelConnectionOpenResult, properties: [NSObject: AnyObject]) {
-		guard resultCode == .Success else {
-			print("Failed to open \(identifier), result = \(resultCode)")
-			handleErrorCondition(.PeerReset, notifyServer: false)
+	override func handleOpenCompleted(_ resultCode: TunnelConnectionOpenResult, properties: [NSObject: AnyObject]) {
+		guard resultCode == .success else {
+			simpleTunnelLog("Failed to open \(identifier), result = \(resultCode)")
+			handleErrorCondition(.peerReset, notifyServer: false)
 			return
 		}
 
 		guard let localAddress = (tunnel as? ClientTunnel)?.connection!.localAddress as? NWHostEndpoint else {
-			print("Failed to get localAddress.")
-			handleErrorCondition(.Internal)
+			simpleTunnelLog("Failed to get localAddress.")
+			//handleErrorCondition(.)
 			return
 		}
 
 		// Now that the SimpleTunnel connection is open, indicate that we are ready to handle data on the NEAppProxyFlow.
-		appProxyFlow.openWithLocalEndpoint(localAddress) { error in
+		appProxyFlow.open(withLocalEndpoint: localAddress) { error in
 			self.handleSendResult(error)
 		}
 	}
 
-	override func closeConnection(direction: TunnelConnectionCloseDirection) {
+	override func closeConnection(_ direction: TunnelConnectionCloseDirection) {
+		self.closeConnection(direction, flowError: nil)
+	}
+
+	func closeConnection(_ direction: TunnelConnectionCloseDirection, flowError: NEAppProxyFlowError?) {
 		super.closeConnection(direction)
 
+		var error: NSError?
+		if let ferror = flowError {
+            error = NSError(domain: NEAppProxyErrorDomain, code: ferror.code.rawValue, userInfo: nil)
+		}
+
 		if isClosedForWrite {
-			appProxyFlow.closeWriteWithError(nil)
+			appProxyFlow.closeWriteWithError(error)
 		}
 		if isClosedForRead {
-			appProxyFlow.closeReadWithError(nil)
+			appProxyFlow.closeReadWithError(error)
 		}
 	}
 }
@@ -168,32 +159,33 @@ class ClientAppProxyTCPConnection : ClientAppProxyConnection {
 	/// Send an "Open" message to the SimpleTunnel server, to begin the process of establishing a flow of data in the SimpleTunnel protocol.
 	override func open() {
 		open([
-				TunnelMessageKey.TunnelType.rawValue: TunnelLayer.App.rawValue,
+				TunnelMessageKey.TunnelType.rawValue: TunnelLayer.app.rawValue ,
 				TunnelMessageKey.Host.rawValue: (TCPFlow.remoteEndpoint as! NWHostEndpoint).hostname,
-				TunnelMessageKey.Port.rawValue: Int((TCPFlow.remoteEndpoint as! NWHostEndpoint).port)!,
-				TunnelMessageKey.AppProxyFlowType.rawValue: AppProxyFlowKind.TCP.rawValue
+                TunnelMessageKey.Port.rawValue: (TCPFlow.remoteEndpoint as! NWHostEndpoint).port ,
+				TunnelMessageKey.AppProxyFlowType.rawValue: AppProxyFlowKind.tcp.rawValue
 			])
 	}
 
 	/// Handle the result of sending a "Data" message to the SimpleTunnel server.
-	override func handleSendResult(error: NSError?) {
+	override func handleSendResult(_ error: Error?) {
 		if let sendError = error {
-			print("Failed to send Data Message to the Tunnel Server. error = \(sendError)")
-			handleErrorCondition(.HostUnreachable)
+			simpleTunnelLog("Failed to send Data Message to the Tunnel Server. error = \(sendError)")
+			handleErrorCondition(NEAppProxyFlowError.hostUnreachable)
 			return
 		}
 
 		// Read another chunk of data from the source application.
-		TCPFlow.readDataWithCompletionHandler { data, readError in
-			guard let readData = data where readError == nil else {
-				print("Failed to read data from the TCP flow. error = \(readError)")
-				self.handleErrorCondition(.PeerReset)
+		TCPFlow.readData { data, readError in
+			guard let readData = data , readError == nil else {
+				simpleTunnelLog("Failed to read data from the TCP flow. error = \(readError!.localizedDescription)")
+				self.handleErrorCondition(.peerReset)
 				return
 			}
 
-			guard readData.length > 0 else {
-				print("Received EOF on the TCP flow. Closing the flow...")
-				self.handleErrorCondition()
+			guard readData.count > 0 else {
+				simpleTunnelLog("\(self.identifier): received EOF on the TCP flow. Closing the flow...")
+				self.tunnel?.sendCloseType(.write, forConnection: self.identifier)
+				self.TCPFlow.closeReadWithError(nil)
 				return
 			}
 
@@ -202,11 +194,12 @@ class ClientAppProxyTCPConnection : ClientAppProxyConnection {
 	}
 
 	/// Send data received from the SimpleTunnel server to the destination application, using the NEAppProxyTCPFlow object.
-	override func sendData(data: NSData) {
-		TCPFlow.writeData(data) { error in
+	override func sendData(_ data: Data) {
+		TCPFlow.write(data) { error in
 			if let writeError = error {
-				print("Failed to write data to the TCP flow. error = \(writeError)")
-				self.handleErrorCondition()
+				simpleTunnelLog("Failed to write data to the TCP flow. error = \(writeError.localizedDescription)")
+				self.tunnel?.sendCloseType(.read, forConnection: self.identifier)
+				self.TCPFlow.closeWriteWithError(nil)
 			}
 		}
 	}
@@ -236,53 +229,56 @@ class ClientAppProxyUDPConnection : ClientAppProxyConnection {
 	/// Send an "Open" message to the SimpleTunnel server, to begin the process of establishing a flow of data in the SimpleTunnel protocol.
 	override func open() {
 		open([
-				TunnelMessageKey.TunnelType.rawValue: TunnelLayer.App.rawValue,
-				TunnelMessageKey.AppProxyFlowType.rawValue: AppProxyFlowKind.UDP.rawValue
+				TunnelMessageKey.TunnelType.rawValue: TunnelLayer.app.rawValue as AnyObject,
+				TunnelMessageKey.AppProxyFlowType.rawValue: AppProxyFlowKind.udp.rawValue as AnyObject
 			])
 	}
 
 	/// Handle the result of sending a "Data" message to the SimpleTunnel server.
-	override func handleSendResult(error: NSError?) {
+	override func handleSendResult(_ error: Error?) {
 
 		if let sendError = error {
-			print("Failed to send message to Tunnel Server. error = \(sendError)")
-			handleErrorCondition(.HostUnreachable)
+			simpleTunnelLog("Failed to send message to Tunnel Server. error = \(sendError)")
+			handleErrorCondition(.hostUnreachable)
 			return
 		}
 
 		if datagramsOutstanding > 0 {
-			datagramsOutstanding--
+			datagramsOutstanding -= 1
 		}
 
 		// Only read more datagrams from the source application if all outstanding datagrams have been sent on the network.
 		guard datagramsOutstanding == 0 else { return }
 
 		// Read a new set of datagrams from the source application.
-		UDPFlow.readDatagramsWithCompletionHandler { datagrams, remoteEndPoints, readError in
+		UDPFlow.readDatagrams { datagrams, remoteEndPoints, readError in
 
 			guard let readDatagrams = datagrams,
-				readEndpoints = remoteEndPoints
-				where readError == nil else
+				let readEndpoints = remoteEndPoints
+				, readError == nil else
 			{
-				print("Failed to read data from the UDP flow. error = \(readError)")
-				self.handleErrorCondition(.PeerReset)
+                simpleTunnelLog("Failed to read data from the UDP flow. error = \(String(describing: readError))")
+				self.handleErrorCondition(.peerReset)
 				return
 			}
 
 			guard !readDatagrams.isEmpty && readEndpoints.count == readDatagrams.count else {
-				print("Received EOF on the UDP flow. Closing the flow...")
-				self.handleErrorCondition()
+				simpleTunnelLog("\(self.identifier): Received EOF on the UDP flow. Closing the flow...")
+				self.tunnel?.sendCloseType(.write, forConnection: self.identifier)
+				self.UDPFlow.closeReadWithError(nil)
 				return
 			}
 
 			self.datagramsOutstanding = readDatagrams.count
 
-			for (index, datagram) in readDatagrams.enumerate() {
+			for (index, datagram) in readDatagrams.enumerated() {
 				guard let endpoint = readEndpoints[index] as? NWHostEndpoint else { continue }
+
+				simpleTunnelLog("(\(self.identifier)): Sending a \(datagram.count)-byte datagram to \(endpoint.hostname):\(endpoint.port)")
 
 				// Send a data message to the SimpleTunnel server.
 				self.sendDataMessage(datagram, extraProperties:[
-						TunnelMessageKey.Host.rawValue: endpoint.hostname,
+						TunnelMessageKey.Host.rawValue: endpoint.hostname ,
 						TunnelMessageKey.Port.rawValue: Int(endpoint.port)!
 					])
 			}
@@ -290,15 +286,16 @@ class ClientAppProxyUDPConnection : ClientAppProxyConnection {
 	}
 
 	/// Send a datagram received from the SimpleTunnel server to the destination application.
-	override func sendDataWithEndPoint(data: NSData, host: String, port: Int) {
+	override func sendDataWithEndPoint(_ data: Data, host: String, port: Int) {
 		let datagrams = [ data ]
 		let endpoints = [ NWHostEndpoint(hostname: host, port: String(port)) ]
 
 		// Send the datagram to the destination application.
-		UDPFlow.writeDatagrams(datagrams, sentByEndpoints: endpoints) { error in
+		UDPFlow.writeDatagrams(datagrams, sentBy: endpoints) { error in
 			if let error = error {
-				print("Failed to write datagrams to the UDP Flow: \(error)")
-				self.handleErrorCondition()
+				simpleTunnelLog("Failed to write datagrams to the UDP Flow: \(error)")
+				self.tunnel?.sendCloseType(.read, forConnection: self.identifier)
+				self.UDPFlow.closeWriteWithError(nil)
 			}
 		}
 	}

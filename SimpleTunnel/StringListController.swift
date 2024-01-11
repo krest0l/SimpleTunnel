@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2015 Apple Inc. All Rights Reserved.
+	Copyright (C) 2016 Apple Inc. All Rights Reserved.
 	See LICENSE.txt for this sample’s licensing information
 	
 	Abstract:
@@ -23,19 +23,19 @@ class StringListController: ListViewController {
 	var listTitle: String?
 
 	/// The block to execute when the list of strings changes.
-	var stringsChangedHandler: [String] -> Void = { strings in return }
+	var stringsChangedHandler: ([String]) -> Void = { strings in return }
 
 	/// A table view cell containing a text field used to enter new strings to be added to the list.
 	@IBOutlet weak var addStringCell: TextFieldCell!
 
 	/// The number of strings in the list.
 	override var listCount: Int {
-		return targetStrings.count ?? 0
+		return targetStrings.count 
 	}
 
 	/// Returns UITableViewCellSelectionStyle.None
-	override var listCellSelectionStyle: UITableViewCellSelectionStyle {
-		return .None
+	override var listCellSelectionStyle: UITableViewCell.SelectionStyle {
+		return .none
 	}
 
 	// MARK: UIViewController
@@ -52,7 +52,7 @@ class StringListController: ListViewController {
 			self.listInsertItemAtIndex(self.targetStrings.count - 1)
 			self.addStringCell.textField.text = ""
 			self.stringsChangedHandler(self.targetStrings)
-		}
+		} as (() -> Void)
 
 		// Set addStringCell as a custom "add a new item" cell.
 		addCell = addStringCell
@@ -61,7 +61,7 @@ class StringListController: ListViewController {
 	}
 
 	/// Handle the event when the view is being displayed.
-	override func viewWillAppear(animated: Bool) {
+	override func viewWillAppear(_ animated: Bool) {
 		super.viewWillAppear(animated)
 		addStringCell.textField.placeholder = addText
 		navigationItem.title = listTitle
@@ -70,20 +70,20 @@ class StringListController: ListViewController {
 	// MARK: ListViewController
 
 	/// Return the string at the given index.
-	override func listTextForItemAtIndex(index: Int) -> String {
-		return targetStrings[index] ?? ""
+	override func listTextForItemAtIndex(_ index: Int) -> String {
+		return targetStrings[index] 
 	}
 
 	/// Remove the string at the given index.
-	override func listRemoveItemAtIndex(index: Int) {
-		targetStrings.removeAtIndex(index)
+	override func listRemoveItemAtIndex(_ index: Int) {
+		targetStrings.remove(at: index)
 		stringsChangedHandler(targetStrings)
 	}
 
 	// MARK: Interface
 
 	/// Set the list of strings, the title to display for the list, the text used to prompt the user for a new string, and a block to execute when the list of strings changes.
-	func setTargetStrings(strings: [String]?, title: String, addTitle: String, saveHandler: ([String]) -> Void) {
+	func setTargetStrings(_ strings: [String]?, title: String, addTitle: String, saveHandler: @escaping ([String]) -> Void) {
 		targetStrings = strings ?? [String]()
 		listTitle = title
 		addText = addTitle

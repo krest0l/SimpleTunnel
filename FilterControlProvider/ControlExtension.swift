@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2015 Apple Inc. All Rights Reserved.
+	Copyright (C) 2016 Apple Inc. All Rights Reserved.
 	See LICENSE.txt for this sample’s licensing information
 	
 	Abstract:
@@ -18,8 +18,8 @@ class ControlExtension : NEFilterControlProvider {
 	/// The default rules, in the event that 
 	let defaultRules: [String: [String: AnyObject]] = [
 		"www.apple.com" : [
-			"kRule" : FilterRuleAction.Block.rawValue,
-			"kRemediationKey" : "Remediate1"
+			"kRule" : FilterRuleAction.block.rawValue as AnyObject,
+			"kRemediationKey" : "Remediate1" as AnyObject
 		]
 	]
 
@@ -37,22 +37,22 @@ class ControlExtension : NEFilterControlProvider {
 
 		let remediationURL = "https://\(serverAddress)/remediate/?url=\(NEFilterProviderRemediationURLFlowURLHostname)&organization=\(NEFilterProviderRemediationURLOrganization)&username=\(NEFilterProviderRemediationURLUsername)"
 
-		print("Remediation url is \(remediationURL)")
+		simpleTunnelLog("Remediation url is \(remediationURL)")
 
 		remediationMap =
 			[
-				NEFilterProviderRemediationMapRemediationURLs : [ "Remediate1" : remediationURL ],
+				NEFilterProviderRemediationMapRemediationURLs : [ "Remediate1" : remediationURL as NSObject ],
 				NEFilterProviderRemediationMapRemediationButtonTexts :
 					[
-						"RemediateButton1" : "Request Access",
-						"RemediateButton2" : "\"<script>alert('wooo hoooooo');</script>",
-						"RemediateButton3" : "Request Access 3",
+						"RemediateButton1" : "Request Access" as NSObject,
+						"RemediateButton2" : "\"<script>alert('wooo hoooooo');</script>" as NSObject,
+						"RemediateButton3" : "Request Access 3" as NSObject,
 				]
 			]
 
-		self.URLAppendStringMap = [ "SafeYes" : "safe=yes", "Adult" : "adult=yes"]
+		self.urlAppendStringMap = [ "SafeYes" : "safe=yes", "Adult" : "adult=yes"]
 
-		print("Remediation map set")
+		simpleTunnelLog("Remediation map set")
 	}
 
 	// MARK: Initializers
@@ -64,40 +64,40 @@ class ControlExtension : NEFilterControlProvider {
 		FilterUtilities.defaults?.setValue(defaultRules, forKey: "rules")
 		FilterUtilities.fetchRulesFromServer(self.filterConfiguration.serverAddress)
 
-		self.addObserver(self, forKeyPath: "filterConfiguration", options: [.Initial, .New], context: &observerContext)
+		self.addObserver(self, forKeyPath: "filterConfiguration", options: [.initial, .new], context: &observerContext)
 	}
 
 	// MARK: NSObject
 
 	/// Observe changes to the configuration.
-	override func observeValueForKeyPath(keyPath: String?, ofObject object: AnyObject?, change: [String : AnyObject]?, context: UnsafeMutablePointer<Void>) {
+	override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
 		if keyPath == "filterConfiguration" && context == &observerContext {
-			print("configuration changed")
+			simpleTunnelLog("configuration changed")
 			updateFromConfiguration()
 		} else {
-			super.observeValueForKeyPath(keyPath, ofObject: object, change: change, context: context)
+			super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
 		}
 	}
 
 	// MARK: NEFilterControlProvider
 
 	/// Handle a new flow of network data
-	override func handleNewFlow(flow: NEFilterFlow, completionHandler: (NEFilterControlVerdict) -> Void) {
-		print("Handle new flow called")
+	override func handleNewFlow(_ flow: NEFilterFlow, completionHandler: @escaping (NEFilterControlVerdict) -> Void) {
+		simpleTunnelLog("Handle new flow called")
 		var controlVerdict = NEFilterControlVerdict.updateRules()
 		let (ruleType, hostname, _) = FilterUtilities.getRule(flow)
 
 		switch ruleType {
-			case .NeedMoreRulesAndAllow:
-				print("\(hostname) is set to be Allowed")
-				controlVerdict = NEFilterControlVerdict.allowVerdictWithUpdateRules(false)
+			case .needMoreRulesAndAllow:
+				simpleTunnelLog("\(hostname) is set to be Allowed")
+				controlVerdict = NEFilterControlVerdict.allow(withUpdateRules: false)
 
-			case .NeedMoreRulesAndBlock:
-				print("\(hostname) is set to be blocked")
-				controlVerdict = NEFilterControlVerdict.dropVerdictWithUpdateRules(false)
+			case .needMoreRulesAndBlock:
+				simpleTunnelLog("\(hostname) is set to be blocked")
+				controlVerdict = NEFilterControlVerdict.drop(withUpdateRules: false)
 			
 			default:
-				print("\(hostname) is not set for need more rules")
+				simpleTunnelLog("\(hostname) is not set for need more rules")
 		}
 
 		completionHandler(controlVerdict)
